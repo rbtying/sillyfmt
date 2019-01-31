@@ -95,15 +95,24 @@ fn format_line(line: &str, mut writer: impl Write) -> Result<()> {
             o @ "{" | o @ "(" | o @ "[" => {
                 if !oneline {
                     let mut offset = 1;
+                    let mut offset_len = 0;
                     oneline = loop {
                         let lookahead = sequence.get(idx + offset).map(|c| *c);
                         match (o, lookahead) {
                             ("{", Some("}")) | ("(", Some(")")) | ("[", Some("]")) => break true,
-                            (_, None) => break false,
-                            _ => (),
+                            (_, None)
+                            | (_, Some("("))
+                            | (_, Some("["))
+                            | (_, Some("{"))
+                            | (_, Some(",")) => {
+                                break false;
+                            }
+                            (_, Some(s)) => {
+                                offset_len += s.len();
+                            }
                         }
                         offset += 1;
-                        if offset > 5 {
+                        if offset_len >= 32 {
                             break false;
                         }
                     };
