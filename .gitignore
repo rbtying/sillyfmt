@@ -1,3 +1,4 @@
 /target
+src/grammar.rs
 **/*.rs.bk
 /tags

@@ -1,135 +1,312 @@
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Result, Write};
+use std::mem;
 
-pub fn silly_format(reader: impl Read, mut writer: impl Write) -> Result<()> {
+pub mod grammar;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Expr {
+    Sequence(Vec<Box<Expr>>),
+    Container(char, Box<Expr>, char),
+    Item(String),
+    Delimiter(char),
+}
+
+fn swap_char(c: char) -> char {
+    match c {
+        '}' => '{',
+        '{' => '}',
+        ']' => '[',
+        '[' => ']',
+        '(' => ')',
+        ')' => '(',
+        _ => unreachable!(),
+    }
+}
+
+pub fn silly_format(
+    reader: impl Read,
+    mut writer: impl Write,
+    format_on_newline: bool,
+) -> Result<()> {
     let reader = BufReader::new(reader);
+
+    let mut data = String::new();
 
     for line in reader.lines() {
         let line = line?;
-        format_line(&line, &mut writer)?;
-        write!(writer, "\n")?
+        let trimmed = line.trim();
+        data.push_str(&line);
+
+        if trimmed.is_empty() || format_on_newline {
+            do_format(&mut writer, mem::replace(&mut data, String::new()))?;
+        }
+    }
+    if !data.is_empty() {
+        do_format(&mut writer, data)?;
     }
     Ok(())
 }
 
-fn format_line(line: &str, mut writer: impl Write) -> Result<()> {
-    let mut sequence = vec![];
-
-    #[derive(Clone, Copy)]
-    enum C {
-        Whitespace,
-        Alphanum,
-        Symbol,
+fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
+    let (prefix, suffix) = balance_parentheses(&data);
+    if let Some(mut prefix) = prefix {
+        prefix.push_str(&data);
+        data = prefix;
     }
-    let mut start = Some(0);
-    let mut last_c_type = C::Whitespace;
-
-    for (idx, c) in line.char_indices() {
-        let c_type = if c.is_whitespace() {
-            C::Whitespace
-        } else if c.is_alphanumeric()
-            || c == '.'
-            || c == '_'
-            || c == '-'
-            || c == '/'
-            || c == '\\'
-            || c == ':'
-            || c == '\''
-            || c == '\"'
-        {
-            C::Alphanum
-        } else {
-            C::Symbol
-        };
-
-        match (last_c_type, c_type) {
-            (C::Whitespace, C::Whitespace) | (C::Alphanum, C::Alphanum) => (),
-
-            (C::Whitespace, C::Alphanum) | (C::Whitespace, C::Symbol) => {
-                start = Some(idx);
-            }
-            (C::Symbol, C::Alphanum) | (C::Symbol, C::Symbol) | (C::Alphanum, C::Symbol) => {
-                sequence.push(&line[start.unwrap()..idx]);
-                start = Some(idx);
-            }
-
-            (C::Alphanum, C::Whitespace) | (C::Symbol, C::Whitespace) => {
-                sequence.push(&line[start.unwrap()..idx]);
-                start = None;
-            }
-        }
-        last_c_type = c_type;
+    if let Some(suffix) = suffix {
+        data.push_str(&suffix);
     }
-    if let Some(start) = start {
-        if start < line.len() {
-            sequence.push(&line[start..]);
-        }
-    }
+    let res = grammar::TopParser::new().parse(&data);
 
-    let mut indent = 0;
+    match res {
+        Ok(expr) => {
+            let items = format_expr(&*expr);
+            let mut indent = 0;
 
-    macro_rules! newline {
-        () => {{
-            write!(writer, "\n")?;
-            for _ in 0..indent {
-                write!(writer, "  ")?;
-            }
-        }};
-    }
-    let mut oneline = false;
-
-    for (idx, token) in sequence.iter().enumerate() {
-        match *token {
-            "}" | ")" | "]" => {
-                if !oneline {
-                    indent -= 1;
-                    newline!();
+            for item in items.iter() {
+                match item {
+                    R::String(s) => write!(writer, "{}", s)?,
+                    R::Char(c) | R::Delimiter(c, _) => write!(writer, "{}", c)?,
+                    R::Space => write!(writer, " ")?,
+                    R::Indent => {
+                        indent += 1;
+                    }
+                    R::Unindent => {
+                        indent -= 1;
+                    }
+                    R::Newline => {
+                        write!(writer, "\n")?;
+                        for _ in 0..indent {
+                            write!(writer, "  ")?;
+                        }
+                    }
                 }
-                oneline = false;
+            }
+        }
+        Err(e) => {
+            eprintln!("Couldn't parse data: {:?}", e);
+        }
+    }
+    write!(writer, "\n")?;
+    Ok(())
+}
+
+#[derive(Debug)]
+enum R {
+    String(String),
+    Delimiter(char, bool),
+    Char(char),
+    Space,
+    Newline,
+    Indent,
+    Unindent,
+}
+
+impl R {
+    fn len(&self) -> usize {
+        match self {
+            R::String(s) => s.len(),
+            _ => 1,
+        }
+    }
+
+    fn is_newline(&self) -> bool {
+        match self {
+            R::Newline => true,
+            _ => false,
+        }
+    }
+
+    fn is_breakable_delimiter(&self) -> bool {
+        match self {
+            R::Delimiter(_, breakable) => *breakable,
+            _ => false,
+        }
+    }
+
+    fn is_delimiter(&self) -> bool {
+        match self {
+            R::Delimiter(_, _) => true,
+            _ => false,
+        }
+    }
+}
+
+fn format_expr(expr: &Expr) -> Vec<R> {
+    match *expr {
+        Expr::Item(ref s) => {
+            let mut out: Vec<R> = s
+                .split(|c| c == '\r' || c == '\n')
+                .map(|c| {
+                    if c.is_empty() {
+                        vec![]
+                    } else {
+                        vec![R::String(c.to_string()), R::Newline]
+                    }
+                })
+                .flatten()
+                .collect();
+            let _ = out.pop();
+            out
+        }
+        Expr::Sequence(ref s) => {
+            let mut out = Vec::new();
+            let formatted: Vec<Vec<R>> = s.iter().map(|e| format_expr(e)).collect();
+            let (has_breakable, sum) =
+                formatted
+                    .iter()
+                    .fold((false, 0), |(mut breakable, mut sum), it| {
+                        for it in it {
+                            breakable |= it.is_breakable_delimiter();
+                            sum += it.len();
+                        }
+                        (breakable, sum)
+                    });
+            if !has_breakable || sum < 32 {
+                // It all fits in one line!
+                out.extend(
+                    formatted
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, mut e)| {
+                            if e.len() == 1
+                                && e.iter().any(|it| it.is_delimiter())
+                                && idx != s.len() - 1
+                            {
+                                e.push(R::Space);
+                            }
+                            e
+                        })
+                        .flatten(),
+                );
+            } else {
+                // Add newlines after delimiters
+                out.extend(
+                    formatted
+                        .into_iter()
+                        .map(|mut e| {
+                            if e.len() == 1 && e.iter().any(|it| it.is_delimiter()) {
+                                e.push(R::Newline);
+                            }
+                            e
+                        })
+                        .flatten(),
+                );
+            }
+            out
+        }
+        Expr::Delimiter(c) => vec![R::Delimiter(c, c == ',')],
+        Expr::Container(o, ref e, c) => {
+            let mut e = format_expr(&e);
+            let e_len = e.iter().map(|it| it.len()).sum::<usize>();
+            if e_len < 5 && e.iter().all(|e| !e.is_newline()) {
+                let mut out = vec![R::Char(o)];
+                out.extend(e);
+                out.push(R::Char(c));
+                out
+            } else if e_len < 32 && e.iter().all(|e| !e.is_newline()) {
+                let mut out = vec![R::Char(o), R::Space];
+                out.extend(e);
+                out.push(R::Space);
+                out.push(R::Char(c));
+                out
+            } else {
+                let mut out = vec![R::Char(o), R::Indent, R::Newline];
+                while let Some(R::Newline) = e.last() {
+                    e.pop();
+                }
+                out.extend(e);
+                out.push(R::Unindent);
+                out.push(R::Newline);
+                out.push(R::Char(c));
+                out
+            }
+        }
+    }
+}
+
+fn balance_parentheses(s: &'_ str) -> (Option<String>, Option<String>) {
+    let mut stk_map: HashMap<char, usize> = HashMap::new();
+    // Close all opened parens
+    for c in s.chars() {
+        match c {
+            c @ '{' | c @ '[' | c @ '(' => {
+                // Mark the number of opens
+                *stk_map.entry(c).or_insert(0) += 1;
+            }
+            c @ '}' | c @ ']' | c @ ')' => {
+                let o = swap_char(c);
+                let o_e = stk_map.entry(o).or_insert(0);
+                if *o_e > 0 {
+                    *o_e -= 1;
+                } else {
+                    // This is a close without a corresponding open.
+                    // Track it separately.
+                    *stk_map.entry(c).or_insert(0) += 1;
+                }
             }
             _ => (),
         }
-
-        write!(writer, "{} ", token)?;
-
-        match *token {
-            o @ "{" | o @ "(" | o @ "[" => {
-                if !oneline {
-                    let mut offset = 1;
-                    let mut offset_len = 0;
-                    oneline = loop {
-                        let lookahead = sequence.get(idx + offset).map(|c| *c);
-                        match (o, lookahead) {
-                            ("{", Some("}")) | ("(", Some(")")) | ("[", Some("]")) => break true,
-                            (_, None)
-                            | (_, Some("("))
-                            | (_, Some("["))
-                            | (_, Some("{"))
-                            | (_, Some(",")) => {
-                                break false;
-                            }
-                            (_, Some(s)) => {
-                                offset_len += s.len();
-                            }
-                        }
-                        offset += 1;
-                        if offset_len >= 32 {
-                            break false;
-                        }
-                    };
-                }
-                if !oneline {
-                    indent += 1;
-                    newline!();
-                }
-            }
-            "," => {
-                if !oneline {
-                    newline!();
-                }
-            }
-            _ => (),
-        }
     }
 
-    write!(writer, "\n")
+    if stk_map.values().any(|ct| *ct > 0) {
+        let mut prefix = None;
+        let mut suffix = None;
+        for (c, ct) in stk_map.into_iter() {
+            if ct == 0 {
+                continue;
+            }
+            match c {
+                c @ '{' | c @ '[' | c @ '(' => {
+                    if suffix.is_none() {
+                        suffix = Some(String::new());
+                    }
+                    let suffix = suffix.as_mut().expect("must be set");
+                    for _ in 0..ct {
+                        suffix.push(swap_char(c));
+                    }
+                }
+                c @ '}' | c @ ']' | c @ ')' => {
+                    if prefix.is_none() {
+                        prefix = Some(String::new());
+                    }
+                    let prefix = prefix.as_mut().expect("must be set");
+                    for _ in 0..ct {
+                        prefix.push(swap_char(c));
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        ((prefix, suffix))
+    } else {
+        ((None, None))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::balance_parentheses;
+
+    #[test]
+    fn test_basic_hanging_open() {
+        let (p, s) = balance_parentheses("((");
+        assert_eq!(p, None);
+        assert_eq!(s, Some("))".to_owned()));
+    }
+
+    #[test]
+    fn test_basic_hanging_close() {
+        let (p, s) = balance_parentheses("))");
+        assert_eq!(p, Some("((".to_owned()));
+        assert_eq!(s, None);
+    }
+
+    #[test]
+    fn test_backward_pair() {
+        let (p, s) = balance_parentheses(")(");
+        assert_eq!(p, Some("(".to_owned()));
+        assert_eq!(s, Some(")".to_owned()));
+    }
 }

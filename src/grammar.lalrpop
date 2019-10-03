@@ -1,0 +1,111 @@
+use crate::Expr;
+
+grammar;
+
+pub Top: Box<Expr> = {
+    <s: Opening*> <e: ExprSequence> <t: Closing*> => {
+        if t.is_empty() && s.is_empty() {
+            e
+        } else {
+            let mut s = s;
+            s.push(e);
+            s.extend(t);
+            Box::new(Expr::Sequence(s))
+        }
+    },
+}
+
+Opening: Box<Expr> = {
+    "," => Box::new(Expr::Item(<>.to_string())),
+    ":" => Box::new(Expr::Item(<>.to_string())),
+};
+
+Closing: Box<Expr> = {
+    ")" => Box::new(Expr::Item(<>.to_string())),
+    "]" => Box::new(Expr::Item(<>.to_string())),
+    "}" => Box::new(Expr::Item(<>.to_string())),
+};
+
+ExprSequence: Box<Expr> = {
+    <e: Expr*> => Box::new(Expr::Sequence(<>)),
+}
+
+CommaSeqUnit: Box<Expr> = {
+    ColonSeqUnit,
+    ColonSequence,
+};
+
+ColonSeqUnit: Box<Expr> = {
+    Container,
+    Symbol,
+    Item,
+};
+
+Expr: Box<Expr> = {
+    CommaSequence,
+    CommaSeqUnit,
+};
+
+Container: Box<Expr> = {
+    "(" <e: ExprSequence> ")" => Box::new(Expr::Container('(', e, ')')),
+    "[" <e: ExprSequence> "]" => Box::new(Expr::Container('[', e, ']')),
+    "{" <e: ExprSequence> "}" => Box::new(Expr::Container('{', e, '}')),
+    "(" <e: ExprSequence> ! => Box::new(Expr::Container('(', e, ' ')),
+    "[" <e: ExprSequence> ! => Box::new(Expr::Container('[', e, ' ')),
+    "{" <e: ExprSequence> ! => Box::new(Expr::Container('{', e, ' ')),
+};
+
+Item: Box<Expr> = {
+    r"[^()\[\]{},:=<>]+" => Box::new(Expr::Item(<>.to_string())),
+};
+Symbol: Box<Expr> = {
+    r"=>" => Box::new(Expr::Item(<>.to_string())),
+    r"<=" => Box::new(Expr::Item(<>.to_string())),
+    r"<=>" => Box::new(Expr::Item(<>.to_string())),
+    r"==" => Box::new(Expr::Item(<>.to_string())),
+    r"<" => Box::new(Expr::Item(<>.to_string())),
+    r">" => Box::new(Expr::Item(<>.to_string())),
+    r"=" => Box::new(Expr::Item(<>.to_string())),
+}
+
+CommaSequence: Box<Expr> = {
+    <s: CommaSeqUnit> <c: CommaPrefixed+> => Box::new(Expr::Sequence({
+        let mut v = vec![s];
+        v.extend(c.into_iter().map(|v| v.into_iter()).flatten());
+        v
+    })),
+};
+
+CommaPrefixed: Vec<Box<Expr>> = {
+    <c: Comma+> <u: CommaSeqUnit> => {
+        let mut c = c;
+        c.push(u);
+        c
+    },
+    <c: Comma+> ! => {c},
+};
+
+Comma: Box<Expr> = {
+    "," => Box::new(Expr::Delimiter(',')),
+};
+
+ColonSequence: Box<Expr> = {
+    <s: ColonSeqUnit> <c: ColonPrefixed+> => Box::new(Expr::Sequence({
+        let mut v = vec![s];
+        v.extend(c.into_iter().map(|v| v.into_iter()).flatten());
+        v
+    })),
+};
+
+ColonPrefixed: Vec<Box<Expr>> = {
+    <c: Colon+> <u: ColonSeqUnit> => {
+        let mut c = c;
+        c.push(u);
+        c
+    },
+    <c: Colon+> ! => {c},
+};
+
+Colon: Box<Expr> = {
+    ":" => Box::new(Expr::Delimiter(':')),
+};
