@@ -86,6 +86,7 @@ fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
         }
         Err(e) => {
             eprintln!("Couldn't parse data: {:?}", e);
+            writeln!(writer, "{}", data)?;
         }
     }
     write!(writer, "\n")?;
@@ -287,7 +288,25 @@ fn balance_parentheses(s: &'_ str) -> (Option<String>, Option<String>) {
 
 #[cfg(test)]
 mod test {
-    use super::balance_parentheses;
+    use super::{
+        do_format,
+        balance_parentheses
+    };
+
+    #[test]
+    fn test_comma_colon_container() {
+        let test_str = "{,:}";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "{,:}");
+    }
+    #[test]
+    fn test_colon_container_seq() {
+        let test_str = "{:}";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "{:}");
+    }
 
     #[test]
     fn test_basic_hanging_open() {

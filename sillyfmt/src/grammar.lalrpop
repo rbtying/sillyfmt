@@ -28,6 +28,13 @@ Closing: Box<Expr> = {
 
 ExprSequence: Box<Expr> = {
     <e: Expr*> => Box::new(Expr::Sequence(<>)),
+    <er: !+> => {
+      Box::new(Expr::Sequence(er.into_iter().flat_map(|e| {
+        e.dropped_tokens.into_iter().map(|(_, tok, _)| {
+            Box::new(Expr::Item(tok.to_string()))
+        })
+      }).collect()))
+    },
 }
 
 CommaSeqUnit: Box<Expr> = {
@@ -50,9 +57,6 @@ Container: Box<Expr> = {
     "(" <e: ExprSequence> ")" => Box::new(Expr::Container('(', e, ')')),
     "[" <e: ExprSequence> "]" => Box::new(Expr::Container('[', e, ']')),
     "{" <e: ExprSequence> "}" => Box::new(Expr::Container('{', e, '}')),
-    "(" <e: ExprSequence> ! => Box::new(Expr::Container('(', e, ' ')),
-    "[" <e: ExprSequence> ! => Box::new(Expr::Container('[', e, ' ')),
-    "{" <e: ExprSequence> ! => Box::new(Expr::Container('{', e, ' ')),
 };
 
 Item: Box<Expr> = {
@@ -82,7 +86,6 @@ CommaPrefixed: Vec<Box<Expr>> = {
         c.push(u);
         c
     },
-    <c: Comma+> ! => {c},
 };
 
 Comma: Box<Expr> = {
@@ -103,7 +106,6 @@ ColonPrefixed: Vec<Box<Expr>> = {
         c.push(u);
         c
     },
-    <c: Colon+> ! => {c},
 };
 
 Colon: Box<Expr> = {
