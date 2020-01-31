@@ -1,4 +1,6 @@
+use lalrpop_util::ErrorRecovery;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::io::{BufRead, BufReader, Read, Result, Write};
 use std::mem;
 
@@ -86,11 +88,29 @@ fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
         }
         Err(e) => {
             eprintln!("Couldn't parse data: {:?}", e);
-            writeln!(writer, "{}", data)?;
+            writeln!(writer, "original: {}", data)?;
         }
     }
     write!(writer, "\n")?;
     Ok(())
+}
+
+#[allow(dead_code)]
+pub(crate) fn dropped_tokens<
+    I: IntoIterator<Item = ErrorRecovery<L, T, E>>,
+    L: Ord,
+    T: Ord + Display,
+    E: Ord,
+>(
+    iter: I,
+) -> Vec<Box<Expr>> {
+    iter.into_iter()
+        .flat_map(|e| {
+            e.dropped_tokens
+                .into_iter()
+                .map(|(_, tok, _)| Box::new(Expr::Item(tok.to_string())))
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -288,10 +308,7 @@ fn balance_parentheses(s: &'_ str) -> (Option<String>, Option<String>) {
 
 #[cfg(test)]
 mod test {
-    use super::{
-        do_format,
-        balance_parentheses
-    };
+    use super::{balance_parentheses, do_format};
 
     #[test]
     fn test_comma_colon_container() {
@@ -300,12 +317,21 @@ mod test {
         do_format(&mut output, test_str.to_string()).unwrap();
         assert_eq!(String::from_utf8(output).unwrap().trim(), "{,:}");
     }
+
     #[test]
     fn test_colon_container_seq() {
         let test_str = "{:}";
         let mut output = Vec::with_capacity(100);
         do_format(&mut output, test_str.to_string()).unwrap();
         assert_eq!(String::from_utf8(output).unwrap().trim(), "{:}");
+    }
+
+    #[test]
+    fn test_close_colon() {
+        let test_str = "}:";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "{}:");
     }
 
     #[test]

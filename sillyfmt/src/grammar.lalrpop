@@ -1,13 +1,17 @@
-use crate::Expr;
+use crate::{
+    Expr,
+    dropped_tokens,
+};
 
 grammar;
 
 pub Top: Box<Expr> = {
-    <s: Opening*> <e: ExprSequence> <t: Closing*> => {
-        if t.is_empty() && s.is_empty() {
+    <se: !*> <e: ExprSequence> <t: Closing*> => {
+        if t.is_empty() && se.is_empty() {
             e
         } else {
-            let mut s = s;
+            let mut s = vec![];
+            s.extend(dropped_tokens(se));
             s.push(e);
             s.extend(t);
             Box::new(Expr::Sequence(s))
@@ -28,13 +32,6 @@ Closing: Box<Expr> = {
 
 ExprSequence: Box<Expr> = {
     <e: Expr*> => Box::new(Expr::Sequence(<>)),
-    <er: !+> => {
-      Box::new(Expr::Sequence(er.into_iter().flat_map(|e| {
-        e.dropped_tokens.into_iter().map(|(_, tok, _)| {
-            Box::new(Expr::Item(tok.to_string()))
-        })
-      }).collect()))
-    },
 }
 
 CommaSeqUnit: Box<Expr> = {
@@ -57,6 +54,21 @@ Container: Box<Expr> = {
     "(" <e: ExprSequence> ")" => Box::new(Expr::Container('(', e, ')')),
     "[" <e: ExprSequence> "]" => Box::new(Expr::Container('[', e, ']')),
     "{" <e: ExprSequence> "}" => Box::new(Expr::Container('{', e, '}')),
+    "(" <er: !+> <e: ExprSequence> ")" => {
+        let mut seq = dropped_tokens(er);
+        seq.push(e);
+        Box::new(Expr::Container('(', Box::new(Expr::Sequence(seq)), ')'))
+    },
+    "[" <er: !+> <e: ExprSequence> "]" => {
+        let mut seq = dropped_tokens(er);
+        seq.push(e);
+        Box::new(Expr::Container('[', Box::new(Expr::Sequence(seq)), ']'))
+    },
+    "{" <er: !+> <e: ExprSequence> "}" => {
+        let mut seq = dropped_tokens(er);
+        seq.push(e);
+        Box::new(Expr::Container('{', Box::new(Expr::Sequence(seq)), '}'))
+    },
 };
 
 Item: Box<Expr> = {
@@ -86,6 +98,11 @@ CommaPrefixed: Vec<Box<Expr>> = {
         c.push(u);
         c
     },
+    <c: Comma+> <er: !+> => {
+      let mut v = c;
+      v.extend(dropped_tokens(er));
+      v
+    },
 };
 
 Comma: Box<Expr> = {
@@ -98,6 +115,11 @@ ColonSequence: Box<Expr> = {
         v.extend(c.into_iter().map(|v| v.into_iter()).flatten());
         v
     })),
+    <s: ColonSeqUnit> <er: !+> => Box::new(Expr::Sequence({
+        let mut v = vec![s];
+        v.extend(dropped_tokens(er));
+        v
+    })),
 };
 
 ColonPrefixed: Vec<Box<Expr>> = {
@@ -105,6 +127,11 @@ ColonPrefixed: Vec<Box<Expr>> = {
         let mut c = c;
         c.push(u);
         c
+    },
+    <c: Colon+> <er: !+> => {
+      let mut v = c;
+      v.extend(dropped_tokens(er));
+      v
     },
 };
 
