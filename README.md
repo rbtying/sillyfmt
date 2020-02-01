@@ -67,3 +67,5 @@ Hit enter twice to format, or re-run with --newline
 Run it with `--newline` to start formatting immediately, rather than waiting for an empty line.
 
 You can also pipe data directly into `sillyfmt`.
+
+See [https://robertying.com/post/silly-formatting/](https://robertying.com/post/silly-formatting/) for the origin story
