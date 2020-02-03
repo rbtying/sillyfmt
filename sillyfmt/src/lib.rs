@@ -1,6 +1,6 @@
 use lalrpop_util::ErrorRecovery;
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::io::{BufRead, BufReader, Read, Result, Write};
 use std::mem;
 
@@ -11,6 +11,7 @@ pub enum Expr {
     Sequence(Vec<Box<Expr>>),
     Container(char, Box<Expr>, char),
     Item(String),
+    Symbol(String),
     Delimiter(char),
 }
 
@@ -50,7 +51,7 @@ pub fn silly_format(
     Ok(())
 }
 
-fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
+pub fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
     let (prefix, suffix) = balance_parentheses(&data);
     if let Some(mut prefix) = prefix {
         prefix.push_str(&data);
@@ -98,9 +99,9 @@ fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
 #[allow(dead_code)]
 pub(crate) fn dropped_tokens<
     I: IntoIterator<Item = ErrorRecovery<L, T, E>>,
-    L: Ord,
-    T: Ord + Display,
-    E: Ord,
+    L: Ord + Debug,
+    T: Ord + Display + Debug,
+    E: Ord + Debug,
 >(
     iter: I,
 ) -> Vec<Box<Expr>> {
@@ -171,6 +172,7 @@ fn format_expr(expr: &Expr) -> Vec<R> {
             let _ = out.pop();
             out
         }
+        Expr::Symbol(ref s) => vec![R::Space, R::String(s.to_string()), R::Space],
         Expr::Sequence(ref s) => {
             let mut out = Vec::new();
             let formatted: Vec<Vec<R>> = s.iter().map(|e| format_expr(e)).collect();
@@ -309,6 +311,14 @@ fn balance_parentheses(s: &'_ str) -> (Option<String>, Option<String>) {
 #[cfg(test)]
 mod test {
     use super::{balance_parentheses, do_format};
+
+    #[test]
+    fn test_basic_symbol() {
+        let test_str = "a=b";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "a = b");
+    }
 
     #[test]
     fn test_comma_colon_container() {
