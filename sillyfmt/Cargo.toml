@@ -7,8 +7,8 @@ build = "build.rs"
 
 [dependencies]
 atty = "0.2.13"
-lalrpop-util = "0.17.2"
+tree-sitter = "0.6.2"
 regex = "0.2.1"
 
 [build-dependencies]
-lalrpop = "0.17.2"
+cc = "1.0"

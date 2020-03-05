@@ -1,6 +1,11 @@
+extern crate cc;
+
+use std::path::PathBuf;
+
 fn main() {
-    lalrpop::Configuration::new()
-        .generate_in_source_tree()
-        .process()
-        .unwrap();
+    let dir: PathBuf = ["..", "tree-sitter-sillyfmt", "src"].iter().collect();
+    cc::Build::new()
+        .include(&dir)
+        .file(dir.join("parser.c"))
+        .compile("tree-sitter-sillyfmt")
 }

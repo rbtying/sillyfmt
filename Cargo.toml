@@ -3,4 +3,5 @@
 members = [
     "sillyfmt",
     "sillyfmt-wasm",
+    "sillyfmt-fuzz",
 ]

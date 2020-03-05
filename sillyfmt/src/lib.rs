@@ -1,18 +1,10 @@
-use lalrpop_util::ErrorRecovery;
 use std::collections::HashMap;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read, Result, Write};
 use std::mem;
 
-pub mod grammar;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Expr {
-    Sequence(Vec<Box<Expr>>),
-    Container(char, Box<Expr>, char),
-    Item(String),
-    Symbol(String),
-    Delimiter(char),
+extern "C" {
+    fn tree_sitter_sillyfmt() -> tree_sitter::Language;
 }
 
 fn swap_char(c: char) -> char {
@@ -51,6 +43,170 @@ pub fn silly_format(
     Ok(())
 }
 
+fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b [u8]) -> Vec<R> {
+    let mut out = Vec::new();
+    let node = cursor.node();
+    match node.kind() {
+        "symbol" => {
+            let symbol = node.utf8_text(data).unwrap().to_string();
+            out.push(if symbol.chars().count() == 1 {
+                R::Delimiter(symbol.chars().next().unwrap(), false)
+            } else {
+                R::String(symbol)
+            });
+        }
+        "binary_op" => {
+            let mut formatted = vec![];
+            if cursor.goto_first_child() {
+                // Try to format all the children.
+                loop {
+                    let inner_node = cursor.node();
+                    if inner_node.kind() == "symbol" {
+                        let symbol = inner_node.utf8_text(data).unwrap().to_string();
+                        let symbol_r = if symbol.chars().count() == 1 {
+                            R::Delimiter(symbol.chars().next().unwrap(), false)
+                        } else {
+                            R::String(symbol)
+                        };
+                        if let R::Delimiter(':', _) = symbol_r {
+                            formatted.push(vec![symbol_r, R::Space]);
+                        } else {
+                            formatted.push(vec![R::Space, symbol_r, R::Space]);
+                        }
+                    } else {
+                        formatted.push(format_tree_cursor(inner_node.walk(), data));
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+
+            format_seq(formatted, &mut out);
+        }
+        "ERROR" | "text" | "time" => out.push(R::String(node.utf8_text(data).unwrap().to_string())),
+        "," => out.push(R::Delimiter(',', true)),
+        "container" => {
+            let mut formatted_children = vec![];
+            let mut open = ' ';
+            let mut close = ' ';
+            if cursor.goto_first_child() {
+                // Try to format all the children.
+                loop {
+                    match cursor.field_name() {
+                        Some("open") => {
+                            if let Some(c) = cursor.node().utf8_text(data).unwrap().chars().next() {
+                                open = c;
+                            }
+                        }
+                        Some("close") => {
+                            if let Some(c) = cursor.node().utf8_text(data).unwrap().chars().next() {
+                                close = c;
+                            }
+                        }
+                        _ => {
+                            formatted_children.push(format_tree_cursor(cursor.node().walk(), data))
+                        }
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+
+            let mut e = vec![];
+            format_seq(formatted_children, &mut e);
+            let e_len = e.iter().map(|it| it.len()).sum::<usize>();
+            if e_len < 5 && e.iter().all(|e| !e.is_newline()) {
+                out.push(R::Char(open));
+                out.extend(e);
+                out.push(R::Char(close));
+            } else if e_len < 32 && e.iter().all(|e| !e.is_newline()) {
+                out.push(R::Char(open));
+                out.push(R::Space);
+                out.extend(e);
+                out.push(R::Space);
+                out.push(R::Char(close));
+            } else {
+                out.push(R::Char(open));
+                out.push(R::Indent);
+                out.push(R::Newline);
+                while let Some(R::Newline) = e.last() {
+                    e.pop();
+                }
+                out.extend(e);
+                out.push(R::Unindent);
+                out.push(R::Newline);
+                out.push(R::Char(close));
+            }
+        }
+        _ if node.is_named() => {
+            let mut formatted = vec![];
+            if cursor.goto_first_child() {
+                // Try to format all the children.
+                loop {
+                    formatted.push(format_tree_cursor(cursor.node().walk(), data));
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+
+            format_seq(formatted, &mut out);
+        }
+        _ => {
+            out.push(R::String(node.utf8_text(data).unwrap().to_string()));
+        }
+    }
+
+    out
+}
+
+fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
+    let (has_breakable, sum) = formatted
+        .iter()
+        .fold((false, 0), |(mut breakable, mut sum), it| {
+            for it in it {
+                breakable |= it.is_breakable_delimiter();
+                sum += it.len();
+            }
+            (breakable, sum)
+        });
+    if !has_breakable || sum < 32 {
+        let last = if formatted.is_empty() {
+            0
+        } else {
+            formatted.len() - 1
+        };
+        // It all fits in one line!
+        out.extend(
+            formatted
+                .into_iter()
+                .enumerate()
+                .map(|(idx, mut e)| {
+                    if e.len() == 1 && e.iter().any(|it| it.is_delimiter()) && idx != last {
+                        e.push(R::Space);
+                    }
+                    e
+                })
+                .flatten(),
+        );
+    } else {
+        // Add newlines after delimiters
+        out.extend(
+            formatted
+                .into_iter()
+                .map(|mut e| {
+                    if e.len() == 1 && e.iter().any(|it| it.is_delimiter()) {
+                        e.push(R::Newline);
+                    }
+                    e
+                })
+                .flatten(),
+        );
+    }
+}
+
 pub fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
     let (prefix, suffix) = balance_parentheses(&data);
     if let Some(mut prefix) = prefix {
@@ -60,58 +216,38 @@ pub fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
     if let Some(suffix) = suffix {
         data.push_str(&suffix);
     }
-    let res = grammar::TopParser::new().parse(&data);
 
-    match res {
-        Ok(expr) => {
-            let items = format_expr(&*expr);
-            let mut indent = 0;
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(unsafe { tree_sitter_sillyfmt() })
+        .unwrap();
+    let tree = parser.parse(&data, None).unwrap();
 
-            for item in items.iter() {
-                match item {
-                    R::String(s) => write!(writer, "{}", s)?,
-                    R::Char(c) | R::Delimiter(c, _) => write!(writer, "{}", c)?,
-                    R::Space => write!(writer, " ")?,
-                    R::Indent => {
-                        indent += 1;
-                    }
-                    R::Unindent => {
-                        indent -= 1;
-                    }
-                    R::Newline => {
-                        write!(writer, "\n")?;
-                        for _ in 0..indent {
-                            write!(writer, "  ")?;
-                        }
-                    }
+    let items = format_tree_cursor(tree.walk(), data.as_bytes());
+    let mut indent = 0;
+
+    for item in items.iter() {
+        match item {
+            R::String(s) => write!(writer, "{}", s)?,
+            R::Char(c) | R::Delimiter(c, _) => write!(writer, "{}", c)?,
+            R::Space => write!(writer, " ")?,
+            R::Indent => {
+                indent += 1;
+            }
+            R::Unindent => {
+                indent -= 1;
+            }
+            R::Newline => {
+                write!(writer, "\n")?;
+                for _ in 0..indent {
+                    write!(writer, "  ")?;
                 }
             }
         }
-        Err(e) => {
-            eprintln!("Couldn't parse data: {:?}", e);
-            writeln!(writer, "original: {}", data)?;
-        }
     }
+
     write!(writer, "\n")?;
     Ok(())
-}
-
-#[allow(dead_code)]
-pub(crate) fn dropped_tokens<
-    I: IntoIterator<Item = ErrorRecovery<L, T, E>>,
-    L: Ord + Debug,
-    T: Ord + Display + Debug,
-    E: Ord + Debug,
->(
-    iter: I,
-) -> Vec<Box<Expr>> {
-    iter.into_iter()
-        .flat_map(|e| {
-            e.dropped_tokens
-                .into_iter()
-                .map(|(_, tok, _)| Box::new(Expr::Item(tok.to_string())))
-        })
-        .collect()
 }
 
 #[derive(Debug)]
@@ -151,100 +287,6 @@ impl R {
         match self {
             R::Delimiter(_, _) => true,
             _ => false,
-        }
-    }
-}
-
-fn format_expr(expr: &Expr) -> Vec<R> {
-    match *expr {
-        Expr::Item(ref s) => {
-            let mut out: Vec<R> = s
-                .split(|c| c == '\r' || c == '\n')
-                .map(|c| {
-                    if c.is_empty() {
-                        vec![]
-                    } else {
-                        vec![R::String(c.to_string()), R::Newline]
-                    }
-                })
-                .flatten()
-                .collect();
-            let _ = out.pop();
-            out
-        }
-        Expr::Symbol(ref s) => vec![R::Space, R::String(s.to_string()), R::Space],
-        Expr::Sequence(ref s) => {
-            let mut out = Vec::new();
-            let formatted: Vec<Vec<R>> = s.iter().map(|e| format_expr(e)).collect();
-            let (has_breakable, sum) =
-                formatted
-                    .iter()
-                    .fold((false, 0), |(mut breakable, mut sum), it| {
-                        for it in it {
-                            breakable |= it.is_breakable_delimiter();
-                            sum += it.len();
-                        }
-                        (breakable, sum)
-                    });
-            if !has_breakable || sum < 32 {
-                // It all fits in one line!
-                out.extend(
-                    formatted
-                        .into_iter()
-                        .enumerate()
-                        .map(|(idx, mut e)| {
-                            if e.len() == 1
-                                && e.iter().any(|it| it.is_delimiter())
-                                && idx != s.len() - 1
-                            {
-                                e.push(R::Space);
-                            }
-                            e
-                        })
-                        .flatten(),
-                );
-            } else {
-                // Add newlines after delimiters
-                out.extend(
-                    formatted
-                        .into_iter()
-                        .map(|mut e| {
-                            if e.len() == 1 && e.iter().any(|it| it.is_delimiter()) {
-                                e.push(R::Newline);
-                            }
-                            e
-                        })
-                        .flatten(),
-                );
-            }
-            out
-        }
-        Expr::Delimiter(c) => vec![R::Delimiter(c, c == ',')],
-        Expr::Container(o, ref e, c) => {
-            let mut e = format_expr(&e);
-            let e_len = e.iter().map(|it| it.len()).sum::<usize>();
-            if e_len < 5 && e.iter().all(|e| !e.is_newline()) {
-                let mut out = vec![R::Char(o)];
-                out.extend(e);
-                out.push(R::Char(c));
-                out
-            } else if e_len < 32 && e.iter().all(|e| !e.is_newline()) {
-                let mut out = vec![R::Char(o), R::Space];
-                out.extend(e);
-                out.push(R::Space);
-                out.push(R::Char(c));
-                out
-            } else {
-                let mut out = vec![R::Char(o), R::Indent, R::Newline];
-                while let Some(R::Newline) = e.last() {
-                    e.pop();
-                }
-                out.extend(e);
-                out.push(R::Unindent);
-                out.push(R::Newline);
-                out.push(R::Char(c));
-                out
-            }
         }
     }
 }
@@ -318,6 +360,48 @@ mod test {
         let mut output = Vec::with_capacity(100);
         do_format(&mut output, test_str.to_string()).unwrap();
         assert_eq!(String::from_utf8(output).unwrap().trim(), "a = b");
+    }
+
+    #[test]
+    fn test_basic_string() {
+        let test_str = "asdf";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "asdf");
+    }
+
+    #[test]
+    fn test_sequence() {
+        let test_str = "a,b,c,d,e";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "a, b, c, d, e");
+    }
+
+    #[test]
+    fn test_binop_sequence_in_container() {
+        let test_str = "{a:b, c:d, e:f, g:h, i:j, k:l, m:n, o:p, q:r, s:t, u:v, w:x, y:z}";
+        let mut output = Vec::with_capacity(1000);
+        do_format(&mut output, test_str.to_string()).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap().trim(),
+            "{
+  a: b,
+  c: d,
+  e: f,
+  g: h,
+  i: j,
+  k: l,
+  m: n,
+  o: p,
+  q: r,
+  s: t,
+  u: v,
+  w: x,
+  y: z
+}"
+        );
     }
 
     #[test]

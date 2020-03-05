@@ -1,0 +1,136 @@
+==============================
+Basic comma-delimited sequence
+==============================
+
+a, b, c, d
+
+---
+
+(source_file (comma_delimited_sequence (text) (text) (text) (text)))
+
+================================================
+Basic comma-delimited sequence with extra commas
+================================================
+
+a, , c, d
+
+---
+
+(source_file (comma_delimited_sequence (text) (ERROR) (text) (text)))
+
+==============================================
+Comma-delimited sequence starting with a comma
+==============================================
+
+, a, b
+
+---
+
+(source_file (ERROR) (comma_delimited_sequence (text) (text)))
+
+====
+time
+====
+
+00:00:00
+
+---
+
+(source_file (time))
+
+
+============
+() container
+============
+
+()
+
+---
+
+(source_file (container))
+
+===============
+((abc)) container
+===============
+
+((abc))
+
+---
+
+(source_file (container (container (text))))
+
+===================
+(a, b, c) container
+===================
+
+(a, b, c)
+
+---
+
+(source_file (container (comma_delimited_sequence (text) (text) (text))))
+
+===================
+[a, b, c] container
+===================
+
+[a, b, c]
+
+---
+
+(source_file (container (comma_delimited_sequence (text) (text) (text))))
+
+===================
+[a, b, c] container
+===================
+
+{a, b, c}
+
+---
+
+(source_file (container (comma_delimited_sequence (text) (text) (text))))
+
+============================
+{a, b, c) mismatch container
+============================
+
+{a, b, c)
+
+---
+
+(source_file (ERROR (comma_delimited_sequence (text) (text) (text))))
+
+=================
+Sequence of pairs
+=================
+
+a=>b, c=>d, e=>f
+
+---
+
+(source_file (comma_delimited_sequence (binary_op (text) (symbol) (text)) (binary_op (text) (symbol) (text)) (binary_op (text) (symbol) (text))))
+
+
+================
+Binary operation
+================
+
+a => b
+
+---
+
+(source_file (binary_op (text) (symbol) (text)))
+
+==============================
+Nested sequences in containers
+==============================
+
+{
+  hello: goodbye,
+  list: [
+    a, b, c, d
+  ]
+}
+
+---
+
+(source_file (container (comma_delimited_sequence (binary_op (text) (symbol) (text)) (binary_op (text) (symbol) (container (comma_delimited_sequence (text) (text) (text) (text)))))))
