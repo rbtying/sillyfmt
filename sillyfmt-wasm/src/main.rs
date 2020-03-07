@@ -115,8 +115,8 @@ fn main() {
                 return parser.parse(@{x});
             )))
         });
-        let formatted = String::from_utf8_lossy(&out).to_string();
-        output.set_text_content(&formatted);
+        let formatted = String::from_utf8_lossy(&out);
+        output.set_text_content(&*formatted);
     }));
 
     stdweb::event_loop();
