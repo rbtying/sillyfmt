@@ -1,0 +1,12 @@
+[package]
+name = "sillyfmt-cli"
+version = "0.1.0"
+authors = ["Robert Ying <rbtying@aeturnalus.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+atty = "*"
+sillyfmt-tree-sitter = { path = '../sillyfmt-tree-sitter' }
+sillyfmt = { path = '../sillyfmt' }
