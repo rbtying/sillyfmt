@@ -2,6 +2,7 @@
 
 members = [
     "sillyfmt",
+    "sillyfmt-tree-sitter",
+    "sillyfmt-cli",
     "sillyfmt-wasm",
-    "sillyfmt-fuzz",
 ]

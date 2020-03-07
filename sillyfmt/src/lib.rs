@@ -3,8 +3,22 @@ use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read, Result, Write};
 use std::mem;
 
-extern "C" {
-    fn tree_sitter_sillyfmt() -> tree_sitter::Language;
+pub trait ParseTree {
+    fn root_node(&self) -> Box<dyn ParseNode<'_> + '_>;
+}
+
+pub trait ParseCursor<'a> {
+    fn goto_first_child(&mut self) -> bool;
+    fn goto_next_sibling(&mut self) -> bool;
+    fn node(&self) -> Box<dyn ParseNode<'a> + 'a>;
+    fn field_name(&self) -> Option<String>;
+}
+
+pub trait ParseNode<'a> {
+    fn walk(&self) -> Box<dyn ParseCursor<'a> + 'a>;
+    fn kind(&self) -> String;
+    fn utf8_text(&self, data: &'_ [u8]) -> String;
+    fn is_named(&self) -> bool;
 }
 
 fn swap_char(c: char) -> char {
@@ -23,6 +37,7 @@ pub fn silly_format(
     reader: impl Read,
     mut writer: impl Write,
     format_on_newline: bool,
+    parser: impl Fn(&str) -> Box<dyn ParseTree>,
 ) -> Result<()> {
     let reader = BufReader::new(reader);
 
@@ -34,21 +49,24 @@ pub fn silly_format(
         data.push_str(&line);
 
         if trimmed.is_empty() || format_on_newline {
-            do_format(&mut writer, mem::replace(&mut data, String::new()))?;
+            do_format(&mut writer, mem::replace(&mut data, String::new()), &parser)?;
         }
     }
     if !data.is_empty() {
-        do_format(&mut writer, data)?;
+        do_format(&mut writer, data, &parser)?;
     }
     Ok(())
 }
 
-fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b [u8]) -> Vec<R> {
+fn format_parse_cursor<'a, 'b>(
+    mut cursor: Box<dyn ParseCursor<'a> + 'a>,
+    data: &'b [u8],
+) -> Vec<R> {
     let mut out = Vec::new();
     let node = cursor.node();
-    match node.kind() {
+    match node.kind().as_str() {
         "symbol" => {
-            let symbol = node.utf8_text(data).unwrap().to_string();
+            let symbol = node.utf8_text(data);
             out.push(if symbol.chars().count() == 1 {
                 R::Delimiter(symbol.chars().next().unwrap(), false)
             } else {
@@ -62,7 +80,7 @@ fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b
                 loop {
                     let inner_node = cursor.node();
                     if inner_node.kind() == "symbol" {
-                        let symbol = inner_node.utf8_text(data).unwrap().to_string();
+                        let symbol = inner_node.utf8_text(data);
                         let symbol_r = if symbol.chars().count() == 1 {
                             R::Delimiter(symbol.chars().next().unwrap(), false)
                         } else {
@@ -74,7 +92,7 @@ fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b
                             formatted.push(vec![R::Space, symbol_r, R::Space]);
                         }
                     } else {
-                        formatted.push(format_tree_cursor(inner_node.walk(), data));
+                        formatted.push(format_parse_cursor(inner_node.walk(), data));
                     }
                     if !cursor.goto_next_sibling() {
                         break;
@@ -84,7 +102,7 @@ fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b
 
             format_seq(formatted, &mut out);
         }
-        "ERROR" | "text" | "time" => out.push(R::String(node.utf8_text(data).unwrap().to_string())),
+        "ERROR" | "text" | "time" => out.push(R::String(node.utf8_text(data))),
         "," => out.push(R::Delimiter(',', true)),
         "container" => {
             let mut formatted_children = vec![];
@@ -93,19 +111,19 @@ fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b
             if cursor.goto_first_child() {
                 // Try to format all the children.
                 loop {
-                    match cursor.field_name() {
+                    match cursor.field_name().as_ref().map(|s| &s[..]) {
                         Some("open") => {
-                            if let Some(c) = cursor.node().utf8_text(data).unwrap().chars().next() {
+                            if let Some(c) = cursor.node().utf8_text(data).chars().next() {
                                 open = c;
                             }
                         }
                         Some("close") => {
-                            if let Some(c) = cursor.node().utf8_text(data).unwrap().chars().next() {
+                            if let Some(c) = cursor.node().utf8_text(data).chars().next() {
                                 close = c;
                             }
                         }
                         _ => {
-                            formatted_children.push(format_tree_cursor(cursor.node().walk(), data))
+                            formatted_children.push(format_parse_cursor(cursor.node().walk(), data))
                         }
                     }
                     if !cursor.goto_next_sibling() {
@@ -145,7 +163,7 @@ fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b
             if cursor.goto_first_child() {
                 // Try to format all the children.
                 loop {
-                    formatted.push(format_tree_cursor(cursor.node().walk(), data));
+                    formatted.push(format_parse_cursor(cursor.node().walk(), data));
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -155,7 +173,7 @@ fn format_tree_cursor<'a, 'b>(mut cursor: tree_sitter::TreeCursor<'a>, data: &'b
             format_seq(formatted, &mut out);
         }
         _ => {
-            out.push(R::String(node.utf8_text(data).unwrap().to_string()));
+            out.push(R::String(node.utf8_text(data)));
         }
     }
 
@@ -207,7 +225,11 @@ fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
     }
 }
 
-pub fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
+pub fn do_format(
+    mut writer: impl Write,
+    mut data: String,
+    parser: impl Fn(&str) -> Box<dyn ParseTree>,
+) -> Result<()> {
     let (prefix, suffix) = balance_parentheses(&data);
     if let Some(mut prefix) = prefix {
         prefix.push_str(&data);
@@ -217,13 +239,8 @@ pub fn do_format(mut writer: impl Write, mut data: String) -> Result<()> {
         data.push_str(&suffix);
     }
 
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(unsafe { tree_sitter_sillyfmt() })
-        .unwrap();
-    let tree = parser.parse(&data, None).unwrap();
-
-    let items = format_tree_cursor(tree.walk(), data.as_bytes());
+    let tree = parser(&data);
+    let items = format_parse_cursor(tree.root_node().walk(), data.as_bytes());
     let mut indent = 0;
 
     for item in items.iter() {
@@ -344,89 +361,15 @@ fn balance_parentheses(s: &'_ str) -> (Option<String>, Option<String>) {
                 _ => unreachable!(),
             }
         }
-        ((prefix, suffix))
+        (prefix, suffix)
     } else {
-        ((None, None))
+        (None, None)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{balance_parentheses, do_format};
-
-    #[test]
-    fn test_basic_symbol() {
-        let test_str = "a=b";
-        let mut output = Vec::with_capacity(100);
-        do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "a = b");
-    }
-
-    #[test]
-    fn test_basic_string() {
-        let test_str = "asdf";
-        let mut output = Vec::with_capacity(100);
-        do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "asdf");
-    }
-
-    #[test]
-    fn test_sequence() {
-        let test_str = "a,b,c,d,e";
-        let mut output = Vec::with_capacity(100);
-        do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "a, b, c, d, e");
-    }
-
-    #[test]
-    fn test_binop_sequence_in_container() {
-        let test_str = "{a:b, c:d, e:f, g:h, i:j, k:l, m:n, o:p, q:r, s:t, u:v, w:x, y:z}";
-        let mut output = Vec::with_capacity(1000);
-        do_format(&mut output, test_str.to_string()).unwrap();
-
-        assert_eq!(
-            String::from_utf8(output).unwrap().trim(),
-            "{
-  a: b,
-  c: d,
-  e: f,
-  g: h,
-  i: j,
-  k: l,
-  m: n,
-  o: p,
-  q: r,
-  s: t,
-  u: v,
-  w: x,
-  y: z
-}"
-        );
-    }
-
-    #[test]
-    fn test_comma_colon_container() {
-        let test_str = "{,:}";
-        let mut output = Vec::with_capacity(100);
-        do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "{,:}");
-    }
-
-    #[test]
-    fn test_colon_container_seq() {
-        let test_str = "{:}";
-        let mut output = Vec::with_capacity(100);
-        do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "{:}");
-    }
-
-    #[test]
-    fn test_close_colon() {
-        let test_str = "}:";
-        let mut output = Vec::with_capacity(100);
-        do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "{}:");
-    }
+    use super::balance_parentheses;
 
     #[test]
     fn test_basic_hanging_open() {
