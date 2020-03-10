@@ -54,6 +54,20 @@ impl<'a> ParseNode<'a> for WrappedNode {
         .try_into()
         .unwrap()
     }
+    fn start_byte(&self) -> usize {
+        js!(
+            return @{&self.0}.startIndex;
+        )
+        .try_into()
+        .unwrap()
+    }
+    fn end_byte(&self) -> usize {
+        js!(
+            return @{&self.0}.endIndex;
+        )
+        .try_into()
+        .unwrap()
+    }
     fn utf8_text(&self, _: &'_ [u8]) -> String {
         js!(
             return @{&self.0}.text;

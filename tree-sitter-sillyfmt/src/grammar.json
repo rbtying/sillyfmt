@@ -9,8 +9,8 @@
       }
     },
     "_expression": {
-      "type": "PREC",
-      "value": -10,
+      "type": "PREC_LEFT",
+      "value": 5,
       "content": {
         "type": "CHOICE",
         "members": [
@@ -309,7 +309,7 @@
       "value": -50,
       "content": {
         "type": "PATTERN",
-        "value": "[^()\\[\\]{},:=<>\\s]+"
+        "value": "[^()\\[\\]{},:=<>\\s][^()\\[\\]{},:=<>]*"
       }
     },
     "time": {

@@ -20,6 +20,12 @@ impl<'a> ParseNode<'a> for WrappedNode<'a> {
     fn kind(&self) -> String {
         self.0.kind().to_string()
     }
+    fn start_byte(&self) -> usize {
+        self.0.start_byte()
+    }
+    fn end_byte(&self) -> usize {
+        self.0.end_byte()
+    }
     fn utf8_text(&self, data: &'_ [u8]) -> String {
         self.0.utf8_text(data).unwrap().to_string()
     }
@@ -77,10 +83,10 @@ mod tests {
 
     #[test]
     fn test_basic_string() {
-        let test_str = "asdf";
+        let test_str = "asdf fdsa";
         let mut output = Vec::with_capacity(100);
         do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "asdf");
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "asdf fdsa");
     }
 
     #[test]
@@ -150,6 +156,6 @@ mod tests {
         let test_str = "}:";
         let mut output = Vec::with_capacity(100);
         do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "{}:");
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "}:");
     }
 }

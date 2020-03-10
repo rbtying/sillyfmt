@@ -3,7 +3,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($._expression),
 
-    _expression: $ => prec(-10, choice(
+    _expression: $ => prec.left(5, choice(
       $._nonseq_expr,
       $.comma_delimited_sequence,
     )),
@@ -64,7 +64,7 @@ module.exports = grammar({
         prec.right(repeat1($._nonseq_expr)))),
     )),
 
-    text: $ => prec.left(-50, /[^()\[\]{},:=<>\s]+/),
+    text: $ => prec.left(-50, /[^()\[\]{},:=<>\s][^()\[\]{},:=<>]*/),
     time: $ => /([0-1]?[0-9]|[2][0-3]):([0-5][0-9])(:[0-5][0-9])?/,
   },
   conflicts: $ => [

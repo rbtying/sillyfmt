@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{BufRead, BufReader, Read, Result, Write};
 use std::mem;
@@ -18,20 +17,10 @@ pub trait ParseCursor<'a> {
 pub trait ParseNode<'a> {
     fn walk(&self) -> Box<dyn ParseCursor<'a> + 'a>;
     fn kind(&self) -> String;
+    fn start_byte(&self) -> usize;
+    fn end_byte(&self) -> usize;
     fn utf8_text(&self, data: &'_ [u8]) -> String;
     fn is_named(&self) -> bool;
-}
-
-fn swap_char(c: char) -> char {
-    match c {
-        '}' => '{',
-        '{' => '}',
-        ']' => '[',
-        '[' => ']',
-        '(' => ')',
-        ')' => '(',
-        _ => unreachable!(),
-    }
 }
 
 pub fn silly_format(
@@ -47,10 +36,12 @@ pub fn silly_format(
 
     for line in reader.lines() {
         let line = line?;
-        let trimmed = line.trim();
-        data.push_str(&line);
+        if !line.is_empty() {
+            data.push_str(&line);
+            data.push('\n');
+        }
 
-        if trimmed.is_empty() || format_on_newline {
+        if line.is_empty() || format_on_newline {
             do_format(
                 &mut writer,
                 mem::replace(&mut data, String::new()),
@@ -68,9 +59,16 @@ pub fn silly_format(
 fn format_parse_cursor<'a, 'b>(
     mut cursor: Box<dyn ParseCursor<'a> + 'a>,
     data: &'b [u8],
+    from: usize,
+    to: usize,
 ) -> Vec<R> {
     let mut out = Vec::new();
     let node = cursor.node();
+    if let Ok(p) = std::str::from_utf8(&data[from..node.start_byte()]) {
+        if !p.is_empty() {
+            out.extend(minimize_whitespace(p));
+        }
+    }
     match node.kind().as_str() {
         "symbol" => {
             let symbol = node.utf8_text(data);
@@ -99,7 +97,12 @@ fn format_parse_cursor<'a, 'b>(
                             formatted.push(vec![R::Space, symbol_r, R::Space]);
                         }
                     } else {
-                        formatted.push(format_parse_cursor(inner_node.walk(), data));
+                        formatted.push(format_parse_cursor(
+                            inner_node.walk(),
+                            data,
+                            inner_node.start_byte(),
+                            inner_node.end_byte(),
+                        ));
                     }
                     if !cursor.goto_next_sibling() {
                         break;
@@ -109,7 +112,7 @@ fn format_parse_cursor<'a, 'b>(
 
             format_seq(formatted, &mut out);
         }
-        "text" | "time" => out.push(R::String(node.utf8_text(data))),
+        "text" | "time" => out.extend(minimize_whitespace(&node.utf8_text(data))),
         "," => out.push(R::Delimiter(',', true)),
         "container" => {
             let mut formatted_children = vec![];
@@ -117,25 +120,34 @@ fn format_parse_cursor<'a, 'b>(
             let mut close = ' ';
             if cursor.goto_first_child() {
                 // Try to format all the children.
+                let mut seq = node.start_byte();
                 loop {
+                    let node = cursor.node();
+                    let end_byte = node.end_byte();
                     match cursor.field_name().as_ref().map(|s| &s[..]) {
                         Some("open") => {
-                            if let Some(c) = cursor.node().utf8_text(data).chars().next() {
+                            if let Some(c) = node.utf8_text(data).chars().next() {
                                 open = c;
                             }
                         }
                         Some("close") => {
-                            if let Some(c) = cursor.node().utf8_text(data).chars().next() {
+                            if let Some(c) = node.utf8_text(data).chars().next() {
                                 close = c;
                             }
                         }
                         _ => {
-                            formatted_children.push(format_parse_cursor(cursor.node().walk(), data))
+                            formatted_children.push(format_parse_cursor(
+                                node.walk(),
+                                data,
+                                seq,
+                                end_byte,
+                            ));
                         }
                     }
                     if !cursor.goto_next_sibling() {
                         break;
                     }
+                    seq = end_byte;
                 }
             }
 
@@ -156,8 +168,13 @@ fn format_parse_cursor<'a, 'b>(
                 out.push(R::Char(open));
                 out.push(R::Indent);
                 out.push(R::Newline);
-                while let Some(R::Newline) = e.last() {
-                    e.pop();
+                loop {
+                    match e.last() {
+                        Some(R::Newline) | Some(R::Space) => {
+                            e.pop();
+                        }
+                        _ => break,
+                    }
                 }
                 out.extend(e);
                 out.push(R::Unindent);
@@ -165,12 +182,36 @@ fn format_parse_cursor<'a, 'b>(
                 out.push(R::Char(close));
             }
         }
-        _ if node.is_named() => {
+        "comma_delimited_sequence" => {
             let mut formatted = vec![];
             if cursor.goto_first_child() {
                 // Try to format all the children.
                 loop {
-                    formatted.push(format_parse_cursor(cursor.node().walk(), data));
+                    let node = cursor.node();
+                    formatted.push(format_parse_cursor(
+                        node.walk(),
+                        data,
+                        node.start_byte(),
+                        node.end_byte(),
+                    ));
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+
+            format_seq(formatted, &mut out);
+        }
+        _ if node.is_named() => {
+            let mut formatted = vec![];
+            let mut seq = node.start_byte();
+            if cursor.goto_first_child() {
+                // Try to format all the children.
+                loop {
+                    let node = cursor.node();
+                    let end = node.end_byte();
+                    formatted.push(format_parse_cursor(node.walk(), data, seq, end));
+                    seq = end;
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -180,10 +221,54 @@ fn format_parse_cursor<'a, 'b>(
             format_seq(formatted, &mut out);
         }
         _ => {
-            out.push(R::String(node.utf8_text(data)));
+            out.extend(minimize_whitespace(&node.utf8_text(data)));
         }
     }
 
+    if let Ok(s) = std::str::from_utf8(&data[node.end_byte()..to]) {
+        out.extend(minimize_whitespace(s));
+    }
+    out
+}
+
+fn minimize_whitespace(s: &'_ str) -> Vec<R> {
+    if s.len() == 1 {
+        return vec![R::Char(s.chars().next().unwrap())];
+    }
+
+    let mut out = vec![];
+
+    let mut s_out = String::new();
+    let mut s_whitespace = None;
+
+    for c in s.trim().chars() {
+        if c.is_whitespace() {
+            out.push(R::String(mem::replace(&mut s_out, String::new())));
+            s_whitespace = Some(match (s_whitespace, c) {
+                (Some(_), c) if c == '\n' => c,
+                (Some(w), _) => w,
+                (None, c) => c,
+            });
+        } else {
+            match s_whitespace {
+                Some(' ') => out.push(R::Space),
+                Some('\n') => out.push(R::Newline),
+                Some(w) => out.push(R::Char(w)),
+                _ => (),
+            }
+            s_whitespace = None;
+            s_out.push(c);
+        }
+    }
+    match s_whitespace {
+        Some(' ') => out.push(R::Space),
+        Some('\n') => out.push(R::Newline),
+        Some(w) => out.push(R::Char(w)),
+        _ => (),
+    }
+    if !s_out.is_empty() {
+        out.push(R::String(s_out));
+    }
     out
 }
 
@@ -234,19 +319,10 @@ fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
 
 pub fn do_format(
     mut writer: impl Write,
-    mut data: String,
+    data: String,
     print_debug: bool,
     parser: impl Fn(&str) -> Box<dyn ParseTree>,
 ) -> Result<()> {
-    let (prefix, suffix) = balance_parentheses(&data);
-    if let Some(mut prefix) = prefix {
-        prefix.push_str(&data);
-        data = prefix;
-    }
-    if let Some(suffix) = suffix {
-        data.push_str(&suffix);
-    }
-
     let tree = parser(&data);
     if print_debug {
         eprintln!("==============================");
@@ -255,7 +331,13 @@ pub fn do_format(
         eprintln!("==============================");
     }
 
-    let items = format_parse_cursor(tree.root_node().walk(), data.as_bytes());
+    let data_as_bytes = data.as_bytes();
+    let items = format_parse_cursor(
+        tree.root_node().walk(),
+        data_as_bytes,
+        0,
+        data_as_bytes.len(),
+    );
     let mut indent = 0;
 
     for item in items.iter() {
@@ -320,90 +402,5 @@ impl R {
             R::Delimiter(_, _) => true,
             _ => false,
         }
-    }
-}
-
-fn balance_parentheses(s: &'_ str) -> (Option<String>, Option<String>) {
-    let mut stk_map: HashMap<char, usize> = HashMap::new();
-    // Close all opened parens
-    for c in s.chars() {
-        match c {
-            c @ '{' | c @ '[' | c @ '(' => {
-                // Mark the number of opens
-                *stk_map.entry(c).or_insert(0) += 1;
-            }
-            c @ '}' | c @ ']' | c @ ')' => {
-                let o = swap_char(c);
-                let o_e = stk_map.entry(o).or_insert(0);
-                if *o_e > 0 {
-                    *o_e -= 1;
-                } else {
-                    // This is a close without a corresponding open.
-                    // Track it separately.
-                    *stk_map.entry(c).or_insert(0) += 1;
-                }
-            }
-            _ => (),
-        }
-    }
-
-    if stk_map.values().any(|ct| *ct > 0) {
-        let mut prefix = None;
-        let mut suffix = None;
-        for (c, ct) in stk_map.into_iter() {
-            if ct == 0 {
-                continue;
-            }
-            match c {
-                c @ '{' | c @ '[' | c @ '(' => {
-                    if suffix.is_none() {
-                        suffix = Some(String::new());
-                    }
-                    let suffix = suffix.as_mut().expect("must be set");
-                    for _ in 0..ct {
-                        suffix.push(swap_char(c));
-                    }
-                }
-                c @ '}' | c @ ']' | c @ ')' => {
-                    if prefix.is_none() {
-                        prefix = Some(String::new());
-                    }
-                    let prefix = prefix.as_mut().expect("must be set");
-                    for _ in 0..ct {
-                        prefix.push(swap_char(c));
-                    }
-                }
-                _ => unreachable!(),
-            }
-        }
-        (prefix, suffix)
-    } else {
-        (None, None)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::balance_parentheses;
-
-    #[test]
-    fn test_basic_hanging_open() {
-        let (p, s) = balance_parentheses("((");
-        assert_eq!(p, None);
-        assert_eq!(s, Some("))".to_owned()));
-    }
-
-    #[test]
-    fn test_basic_hanging_close() {
-        let (p, s) = balance_parentheses("))");
-        assert_eq!(p, Some("((".to_owned()));
-        assert_eq!(s, None);
-    }
-
-    #[test]
-    fn test_backward_pair() {
-        let (p, s) = balance_parentheses(")(");
-        assert_eq!(p, Some("(".to_owned()));
-        assert_eq!(s, Some(")".to_owned()));
     }
 }
