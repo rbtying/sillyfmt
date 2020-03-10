@@ -155,11 +155,19 @@ fn main() {
     .try_into()
     .unwrap();
 
-    let query_str: String = js!(if (location.hash.startsWith("#b64:")) {
-        return atob(decodeURI(location.hash.substring(5)));
-    } else {
-        return decodeURI(location.hash.substring(1));
-    })
+    let query_str: String = js!(
+        try {
+            if (location.hash.startsWith("#b64:")) {
+                return atob(decodeURI(location.hash.substring(5)));
+            } else {
+                return decodeURI(location.hash.substring(1));
+            }
+        } catch (err) {
+            console.log(err);
+            location.hash = "";
+            return "";
+        }
+    )
     .try_into()
     .unwrap();
 
@@ -180,8 +188,10 @@ fn main() {
             const jsstr = @{&s};
             if (jsstr.length >= 64 || jsstr.startsWith("b64:")) {
                 location.hash = "b64:" + encodeURI(btoa(jsstr));
-            } else {
+            } else if (jsstr.length <= 1900) {
                 location.hash = encodeURI(jsstr);
+            } else {
+                location.hash = "";
             }
         );
         let formatted = run_format(s, debug);
