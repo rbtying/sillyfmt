@@ -6,6 +6,10 @@ impl ParseTree for WrappedTree {
     fn root_node(&self) -> Box<dyn ParseNode<'_> + '_> {
         Box::new(WrappedNode(self.0.root_node()))
     }
+
+    fn debug_tree(&self) -> String {
+        self.0.root_node().to_sexp()
+    }
 }
 
 struct WrappedNode<'a>(Node<'a>);
@@ -60,7 +64,7 @@ mod tests {
     use super::parse;
 
     fn do_format(writer: impl Write, data: String) -> Result<()> {
-        sillyfmt::do_format(writer, data, parse)
+        sillyfmt::do_format(writer, data, true, parse)
     }
 
     #[test]
@@ -114,11 +118,23 @@ mod tests {
     }
 
     #[test]
+    fn test_labeled_container() {
+        let test_str = "struct{a:b, c:d}";
+        let mut output = Vec::with_capacity(1000);
+        do_format(&mut output, test_str.to_string()).unwrap();
+
+        assert_eq!(
+            String::from_utf8(output).unwrap().trim(),
+            "struct{ a: b, c: d }"
+        );
+    }
+
+    #[test]
     fn test_comma_colon_container() {
         let test_str = "{,:}";
         let mut output = Vec::with_capacity(100);
         do_format(&mut output, test_str.to_string()).unwrap();
-        assert_eq!(String::from_utf8(output).unwrap().trim(), "{,:}");
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "{, :}");
     }
 
     #[test]

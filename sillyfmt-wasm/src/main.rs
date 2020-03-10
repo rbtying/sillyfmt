@@ -29,6 +29,9 @@ impl ParseTree for WrappedTree {
             return @{&self.0}.rootNode;
         )))
     }
+    fn debug_tree(&self) -> String {
+        js!(@{&self.0}.toString()).try_into().unwrap()
+    }
 }
 js_serializable!(WrappedTree);
 
@@ -110,7 +113,7 @@ fn main() {
     input.add_event_listener(enclose!( (input, output) move |_: InputEvent| {
         let s = input.value();
         let mut out = Vec::new();
-        let _ = silly_format(Cursor::new(s), Cursor::new(&mut out), false, |x| {
+        let _ = silly_format(Cursor::new(s), Cursor::new(&mut out), false, false, |x| {
             Box::new(WrappedTree(js!(
                 return parser.parse(@{x});
             )))

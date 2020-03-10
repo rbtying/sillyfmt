@@ -5,6 +5,7 @@ use std::mem;
 
 pub trait ParseTree {
     fn root_node(&self) -> Box<dyn ParseNode<'_> + '_>;
+    fn debug_tree(&self) -> String;
 }
 
 pub trait ParseCursor<'a> {
@@ -37,6 +38,7 @@ pub fn silly_format(
     reader: impl Read,
     mut writer: impl Write,
     format_on_newline: bool,
+    print_debug: bool,
     parser: impl Fn(&str) -> Box<dyn ParseTree>,
 ) -> Result<()> {
     let reader = BufReader::new(reader);
@@ -49,11 +51,16 @@ pub fn silly_format(
         data.push_str(&line);
 
         if trimmed.is_empty() || format_on_newline {
-            do_format(&mut writer, mem::replace(&mut data, String::new()), &parser)?;
+            do_format(
+                &mut writer,
+                mem::replace(&mut data, String::new()),
+                print_debug,
+                &parser,
+            )?;
         }
     }
     if !data.is_empty() {
-        do_format(&mut writer, data, &parser)?;
+        do_format(&mut writer, data, print_debug, &parser)?;
     }
     Ok(())
 }
@@ -102,7 +109,7 @@ fn format_parse_cursor<'a, 'b>(
 
             format_seq(formatted, &mut out);
         }
-        "ERROR" | "text" | "time" => out.push(R::String(node.utf8_text(data))),
+        "text" | "time" => out.push(R::String(node.utf8_text(data))),
         "," => out.push(R::Delimiter(',', true)),
         "container" => {
             let mut formatted_children = vec![];
@@ -228,6 +235,7 @@ fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
 pub fn do_format(
     mut writer: impl Write,
     mut data: String,
+    print_debug: bool,
     parser: impl Fn(&str) -> Box<dyn ParseTree>,
 ) -> Result<()> {
     let (prefix, suffix) = balance_parentheses(&data);
@@ -240,6 +248,13 @@ pub fn do_format(
     }
 
     let tree = parser(&data);
+    if print_debug {
+        eprintln!("==============================");
+        eprintln!("Debug tree");
+        eprintln!("{}", tree.debug_tree());
+        eprintln!("==============================");
+    }
+
     let items = format_parse_cursor(tree.root_node().walk(), data.as_bytes());
     let mut indent = 0;
 
