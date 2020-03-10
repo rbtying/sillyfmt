@@ -30,7 +30,11 @@ impl ParseTree for WrappedTree {
         )))
     }
     fn debug_tree(&self) -> String {
-        js!(@{&self.0}.toString()).try_into().unwrap()
+        js!(
+            return @{&self.0}.rootNode.toString();
+        )
+        .try_into()
+        .unwrap()
     }
 }
 js_serializable!(WrappedTree);
@@ -102,6 +106,15 @@ js_serializable!(WrappedCursor);
 fn main() {
     stdweb::initialize();
 
+    let debug: bool = js!(
+        const url = new URL(location);
+        const params = url.searchParams;
+        const debug = params.get("debug") != null;
+        return debug;
+    )
+    .try_into()
+    .unwrap();
+
     let input: TextAreaElement = document()
         .query_selector("#text-input")
         .unwrap()
@@ -115,7 +128,11 @@ fn main() {
         let mut out = Vec::new();
         let _ = silly_format(Cursor::new(s), Cursor::new(&mut out), false, false, |x| {
             Box::new(WrappedTree(js!(
-                return parser.parse(@{x});
+                const tree = parser.parse(@{x});
+                if (@{debug}) {
+                    console.log(tree.rootNode.toString());
+                }
+                return tree;
             )))
         });
         let formatted = String::from_utf8_lossy(&out);
