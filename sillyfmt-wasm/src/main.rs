@@ -117,6 +117,32 @@ impl<'a> ParseCursor<'a> for WrappedCursor {
 }
 js_serializable!(WrappedCursor);
 
+fn run_format(s: String, debug: bool) -> String {
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let _ = silly_format(
+        Cursor::new(s),
+        Cursor::new(&mut out),
+        false,
+        if debug {
+            Some(Cursor::new(&mut err))
+        } else {
+            None
+        },
+        |x| {
+            let tree = js!( return parser.parse(@{x}); );
+            let tree_str: String = js!( return @{&tree}.rootNode.text ).try_into().unwrap();
+            (Box::new(WrappedTree(tree)), tree_str)
+        },
+    );
+    let formatted = String::from_utf8_lossy(&out);
+    if !err.is_empty() {
+        let formatted_err = &*String::from_utf8_lossy(&err);
+        js!( console.log(@{formatted_err}); );
+    }
+    formatted.to_string()
+}
+
 fn main() {
     stdweb::initialize();
 
@@ -129,28 +155,37 @@ fn main() {
     .try_into()
     .unwrap();
 
+    let query_str: String = js!(if (location.hash.startsWith("#b64:")) {
+        return atob(decodeURI(location.hash.substring(5)));
+    } else {
+        return decodeURI(location.hash.substring(1));
+    })
+    .try_into()
+    .unwrap();
+
     let input: TextAreaElement = document()
         .query_selector("#text-input")
         .unwrap()
         .unwrap()
         .try_into()
         .unwrap();
+    input.set_value(&query_str);
     let output = document().query_selector("#text-output").unwrap().unwrap();
+    let formatted = run_format(query_str, debug);
+    output.set_text_content(&formatted);
 
     input.add_event_listener(enclose!( (input, output) move |_: InputEvent| {
         let s = input.value();
-        let mut out = Vec::new();
-        let _ = silly_format(Cursor::new(s), Cursor::new(&mut out), false, false, |x| {
-            Box::new(WrappedTree(js!(
-                const tree = parser.parse(@{x});
-                if (@{debug}) {
-                    console.log(tree.rootNode.toString());
-                }
-                return tree;
-            )))
-        });
-        let formatted = String::from_utf8_lossy(&out);
-        output.set_text_content(&*formatted);
+        js!(
+            const jsstr = @{&s};
+            if (jsstr.length >= 64 || jsstr.startsWith("b64:")) {
+                location.hash = "b64:" + encodeURI(btoa(jsstr));
+            } else {
+                location.hash = encodeURI(jsstr);
+            }
+        );
+        let formatted = run_format(s, debug);
+        output.set_text_content(&formatted);
     }));
 
     stdweb::event_loop();

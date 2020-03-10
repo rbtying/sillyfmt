@@ -54,13 +54,13 @@ extern "C" {
     fn tree_sitter_sillyfmt() -> Language;
 }
 
-pub fn parse(s: &str) -> Box<dyn ParseTree> {
+pub fn parse(s: String) -> (Box<dyn ParseTree>, String) {
     let mut parser = Parser::new();
     parser
         .set_language(unsafe { tree_sitter_sillyfmt() })
         .unwrap();
-    let tree = parser.parse(s, None).unwrap();
-    Box::new(WrappedTree(tree))
+    let tree = parser.parse(&s, None).unwrap();
+    (Box::new(WrappedTree(tree)), s)
 }
 
 #[cfg(test)]
@@ -87,6 +87,14 @@ mod tests {
         let mut output = Vec::with_capacity(100);
         do_format(&mut output, test_str.to_string()).unwrap();
         assert_eq!(String::from_utf8(output).unwrap().trim(), "asdf fdsa");
+    }
+
+    #[test]
+    fn test_multiple_space_string() {
+        let test_str = "sss  ssss";
+        let mut output = Vec::with_capacity(100);
+        do_format(&mut output, test_str.to_string()).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "sss ssss");
     }
 
     #[test]

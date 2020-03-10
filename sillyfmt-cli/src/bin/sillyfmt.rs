@@ -23,7 +23,11 @@ fn main() -> io::Result<()> {
         io::stdin(),
         io::stdout(),
         format_on_newline,
-        print_debug,
+        if print_debug {
+            Some(std::io::stderr())
+        } else {
+            None
+        },
         parse,
     )
 }

@@ -27,8 +27,8 @@ pub fn silly_format(
     reader: impl Read,
     mut writer: impl Write,
     format_on_newline: bool,
-    print_debug: bool,
-    parser: impl Fn(&str) -> Box<dyn ParseTree>,
+    mut print_debug: Option<impl Write>,
+    parser: impl Fn(String) -> (Box<dyn ParseTree>, String),
 ) -> Result<()> {
     let reader = BufReader::new(reader);
 
@@ -45,29 +45,28 @@ pub fn silly_format(
             do_format(
                 &mut writer,
                 mem::replace(&mut data, String::new()),
-                print_debug,
+                print_debug.as_mut(),
                 &parser,
             )?;
         }
     }
     if !data.is_empty() {
-        do_format(&mut writer, data, print_debug, &parser)?;
+        do_format(&mut writer, data, print_debug.as_mut(), &parser)?;
     }
     Ok(())
 }
 
-fn format_parse_cursor<'a, 'b>(
+fn format_parse_cursor<'a, 'b, DW: Write>(
     mut cursor: Box<dyn ParseCursor<'a> + 'a>,
     data: &'b [u8],
     from: usize,
     to: usize,
-) -> Vec<R> {
+    mut print_debug: Option<DW>,
+) -> (Vec<R>, Option<DW>) {
     let mut out = Vec::new();
     let node = cursor.node();
     if let Ok(p) = std::str::from_utf8(&data[from..node.start_byte()]) {
-        if !p.is_empty() {
-            out.extend(minimize_whitespace(p));
-        }
+        out.extend(minimize_whitespace(p));
     }
     match node.kind().as_str() {
         "symbol" => {
@@ -97,12 +96,15 @@ fn format_parse_cursor<'a, 'b>(
                             formatted.push(vec![R::Space, symbol_r, R::Space]);
                         }
                     } else {
-                        formatted.push(format_parse_cursor(
+                        let (res, print_debug_) = format_parse_cursor(
                             inner_node.walk(),
                             data,
                             inner_node.start_byte(),
                             inner_node.end_byte(),
-                        ));
+                            print_debug,
+                        );
+                        print_debug = print_debug_;
+                        formatted.push(res);
                     }
                     if !cursor.goto_next_sibling() {
                         break;
@@ -136,12 +138,10 @@ fn format_parse_cursor<'a, 'b>(
                             }
                         }
                         _ => {
-                            formatted_children.push(format_parse_cursor(
-                                node.walk(),
-                                data,
-                                seq,
-                                end_byte,
-                            ));
+                            let (res, print_debug_) =
+                                format_parse_cursor(node.walk(), data, seq, end_byte, print_debug);
+                            formatted_children.push(res);
+                            print_debug = print_debug_;
                         }
                     }
                     if !cursor.goto_next_sibling() {
@@ -188,12 +188,15 @@ fn format_parse_cursor<'a, 'b>(
                 // Try to format all the children.
                 loop {
                     let node = cursor.node();
-                    formatted.push(format_parse_cursor(
+                    let (res, print_debug_) = format_parse_cursor(
                         node.walk(),
                         data,
                         node.start_byte(),
                         node.end_byte(),
-                    ));
+                        print_debug,
+                    );
+                    formatted.push(res);
+                    print_debug = print_debug_;
                     if !cursor.goto_next_sibling() {
                         break;
                     }
@@ -210,7 +213,10 @@ fn format_parse_cursor<'a, 'b>(
                 loop {
                     let node = cursor.node();
                     let end = node.end_byte();
-                    formatted.push(format_parse_cursor(node.walk(), data, seq, end));
+                    let (res, print_debug_) =
+                        format_parse_cursor(node.walk(), data, seq, end, print_debug);
+                    formatted.push(res);
+                    print_debug = print_debug_;
                     seq = end;
                     if !cursor.goto_next_sibling() {
                         break;
@@ -228,48 +234,54 @@ fn format_parse_cursor<'a, 'b>(
     if let Ok(s) = std::str::from_utf8(&data[node.end_byte()..to]) {
         out.extend(minimize_whitespace(s));
     }
-    out
+    (out, print_debug)
 }
 
 fn minimize_whitespace(s: &'_ str) -> Vec<R> {
-    if s.len() == 1 {
-        return vec![R::Char(s.chars().next().unwrap())];
-    }
+    match s.len() {
+        0 => vec![],
+        1 => vec![match s.chars().next().unwrap() {
+            ' ' => R::Space,
+            '\n' => R::Newline,
+            c => R::Char(c),
+        }],
+        _ => {
+            let mut out = vec![];
 
-    let mut out = vec![];
+            let mut s_out = String::new();
+            let mut s_whitespace = None;
 
-    let mut s_out = String::new();
-    let mut s_whitespace = None;
-
-    for c in s.trim().chars() {
-        if c.is_whitespace() {
-            out.push(R::String(mem::replace(&mut s_out, String::new())));
-            s_whitespace = Some(match (s_whitespace, c) {
-                (Some(_), c) if c == '\n' => c,
-                (Some(w), _) => w,
-                (None, c) => c,
-            });
-        } else {
+            for c in s.trim().chars() {
+                if c.is_whitespace() {
+                    out.push(R::String(mem::replace(&mut s_out, String::new())));
+                    s_whitespace = Some(match (s_whitespace, c) {
+                        (Some(_), c) if c == '\n' => c,
+                        (Some(w), _) => w,
+                        (None, c) => c,
+                    });
+                } else {
+                    match s_whitespace {
+                        Some(' ') => out.push(R::Space),
+                        Some('\n') => out.push(R::Newline),
+                        Some(w) => out.push(R::Char(w)),
+                        _ => (),
+                    }
+                    s_whitespace = None;
+                    s_out.push(c);
+                }
+            }
             match s_whitespace {
                 Some(' ') => out.push(R::Space),
                 Some('\n') => out.push(R::Newline),
                 Some(w) => out.push(R::Char(w)),
                 _ => (),
             }
-            s_whitespace = None;
-            s_out.push(c);
+            if !s_out.is_empty() {
+                out.push(R::String(s_out));
+            }
+            out
         }
     }
-    match s_whitespace {
-        Some(' ') => out.push(R::Space),
-        Some('\n') => out.push(R::Newline),
-        Some(w) => out.push(R::Char(w)),
-        _ => (),
-    }
-    if !s_out.is_empty() {
-        out.push(R::String(s_out));
-    }
-    out
 }
 
 fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
@@ -318,33 +330,49 @@ fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
 }
 
 pub fn do_format(
-    mut writer: impl Write,
+    writer: impl Write,
     data: String,
-    print_debug: bool,
-    parser: impl Fn(&str) -> Box<dyn ParseTree>,
+    mut print_debug: Option<impl Write>,
+    parser: impl Fn(String) -> (Box<dyn ParseTree>, String),
 ) -> Result<()> {
-    let tree = parser(&data);
-    if print_debug {
-        eprintln!("==============================");
-        eprintln!("Debug tree");
-        eprintln!("{}", tree.debug_tree());
-        eprintln!("==============================");
+    let (tree, data) = parser(data);
+    if let Some(debug) = print_debug.as_mut() {
+        writeln!(debug, "==============================")?;
+        writeln!(debug, "{}", tree.debug_tree())?;
     }
 
     let data_as_bytes = data.as_bytes();
-    let items = format_parse_cursor(
+    let (items, mut print_debug) = format_parse_cursor(
         tree.root_node().walk(),
         data_as_bytes,
         0,
         data_as_bytes.len(),
+        print_debug,
     );
-    let mut indent = 0;
+    if let Some(mut debug) = print_debug.as_mut() {
+        writeln!(debug, "------------------------------")?;
+        write_output(items.iter(), &mut debug)?;
+        writeln!(debug, "==============================")?;
+    }
 
-    for item in items.iter() {
+    write_output(items.iter(), writer)?;
+
+    Ok(())
+}
+
+fn write_output<'a>(items: impl IntoIterator<Item = &'a R>, mut writer: impl Write) -> Result<()> {
+    let mut indent = 0;
+    for item in items {
         match item {
-            R::String(s) => write!(writer, "{}", s)?,
-            R::Char(c) | R::Delimiter(c, _) => write!(writer, "{}", c)?,
-            R::Space => write!(writer, " ")?,
+            R::String(s) => {
+                write!(writer, "{}", s)?;
+            }
+            R::Char(c) | R::Delimiter(c, _) => {
+                write!(writer, "{}", c)?;
+            }
+            R::Space => {
+                write!(writer, " ")?;
+            }
             R::Indent => {
                 indent += 1;
             }
