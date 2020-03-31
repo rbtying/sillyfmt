@@ -158,7 +158,7 @@ fn main() {
     let query_str: String = js!(
         try {
             if (location.hash.startsWith("#b64:")) {
-                return atob(decodeURI(location.hash.substring(5)));
+                return decodeURIComponent(escape(atob(decodeURI(location.hash.substring(5)))));
             } else {
                 return decodeURI(location.hash.substring(1));
             }
@@ -187,7 +187,7 @@ fn main() {
         js!(
             const jsstr = @{&s};
             if (jsstr.length >= 64 || jsstr.startsWith("b64:")) {
-                location.hash = "b64:" + encodeURI(btoa(jsstr));
+                location.hash = "b64:" + encodeURI(btoa(unescape(encodeURIComponent(jsstr))));
             } else if (jsstr.length <= 1900) {
                 location.hash = encodeURI(jsstr);
             } else {
