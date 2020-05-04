@@ -70,7 +70,7 @@ mod tests {
     use super::parse;
 
     fn do_format(writer: impl Write, data: String) -> Result<()> {
-        sillyfmt::do_format(writer, data, true, parse)
+        sillyfmt::do_format(writer, data, Some(std::io::stdout()), parse)
     }
 
     #[test]

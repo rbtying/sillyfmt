@@ -83,20 +83,19 @@ fn format_parse_cursor<'a, 'b, DW: Write>(
                 // Try to format all the children.
                 loop {
                     let inner_node = cursor.node();
-                    if inner_node.kind() == "symbol" {
+                    if inner_node.kind() == "symbol" || inner_node.kind() == "conflicting_symbol" {
                         let symbol = inner_node.utf8_text(data);
                         let symbol_r = if symbol.chars().count() == 1 {
                             R::Delimiter(symbol.chars().next().unwrap(), false)
                         } else {
                             R::String(symbol)
                         };
-                        if let R::Delimiter(':', _) = symbol_r {
-                            formatted.push(vec![symbol_r, R::Space]);
-                        } else {
-                            formatted.push(vec![R::Space, symbol_r, R::Space]);
-                        }
+                        formatted.push(match symbol_r {
+                            R::Delimiter(':', _) => vec![symbol_r],
+                            _ => vec![R::Space, symbol_r],
+                        });
                     } else {
-                        let (res, print_debug_) = format_parse_cursor(
+                        let (mut res, print_debug_) = format_parse_cursor(
                             inner_node.walk(),
                             data,
                             inner_node.start_byte(),
@@ -104,6 +103,14 @@ fn format_parse_cursor<'a, 'b, DW: Write>(
                             print_debug,
                         );
                         print_debug = print_debug_;
+                        if inner_node.kind() == "subbinary_op" {
+                            res.remove(0);
+                        } else {
+                            match res.first() {
+                                Some(R::Space) | Some(R::Newline) => (),
+                                _ => formatted.push(vec![R::Space]),
+                            }
+                        }
                         formatted.push(res);
                     }
                     if !cursor.goto_next_sibling() {
@@ -306,7 +313,8 @@ fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
                 .into_iter()
                 .enumerate()
                 .map(|(idx, mut e)| {
-                    if e.len() == 1 && e.iter().any(|it| it.is_delimiter()) && idx != last {
+                    if e.len() == 1 && e.iter().any(|it| it.is_breakable_delimiter()) && idx != last
+                    {
                         e.push(R::Space);
                     }
                     e
@@ -319,7 +327,7 @@ fn format_seq(formatted: Vec<Vec<R>>, out: &mut Vec<R>) {
             formatted
                 .into_iter()
                 .map(|mut e| {
-                    if e.len() == 1 && e.iter().any(|it| it.is_delimiter()) {
+                    if e.len() == 1 && e.iter().any(|it| it.is_breakable_delimiter()) {
                         e.push(R::Newline);
                     }
                     e
@@ -421,13 +429,6 @@ impl R {
     fn is_breakable_delimiter(&self) -> bool {
         match self {
             R::Delimiter(_, breakable) => *breakable,
-            _ => false,
-        }
-    }
-
-    fn is_delimiter(&self) -> bool {
-        match self {
-            R::Delimiter(_, _) => true,
             _ => false,
         }
     }

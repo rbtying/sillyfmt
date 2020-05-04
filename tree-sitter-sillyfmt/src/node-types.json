@@ -12,7 +12,15 @@
           "named": true
         },
         {
+          "type": "conflicting_symbol",
+          "named": true
+        },
+        {
           "type": "container",
+          "named": true
+        },
+        {
+          "type": "nonsymbol",
           "named": true
         },
         {
@@ -43,7 +51,15 @@
           "named": true
         },
         {
+          "type": "conflicting_symbol",
+          "named": true
+        },
+        {
           "type": "container",
+          "named": true
+        },
+        {
+          "type": "nonsymbol",
           "named": true
         },
         {
@@ -60,6 +76,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "conflicting_symbol",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "container",
@@ -100,7 +121,15 @@
             "named": true
           },
           {
+            "type": "conflicting_symbol",
+            "named": true
+          },
+          {
             "type": "container",
+            "named": true
+          },
+          {
+            "type": "nonsymbol",
             "named": true
           },
           {
@@ -142,6 +171,11 @@
     }
   },
   {
+    "type": "nonsymbol",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "source_file",
     "named": true,
     "fields": {},
@@ -158,7 +192,54 @@
           "named": true
         },
         {
+          "type": "conflicting_symbol",
+          "named": true
+        },
+        {
           "type": "container",
+          "named": true
+        },
+        {
+          "type": "nonsymbol",
+          "named": true
+        },
+        {
+          "type": "symbol",
+          "named": true
+        },
+        {
+          "type": "text",
+          "named": true
+        },
+        {
+          "type": "time",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "subbinary_op",
+    "named": false,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "binary_op",
+          "named": true
+        },
+        {
+          "type": "conflicting_symbol",
+          "named": true
+        },
+        {
+          "type": "container",
+          "named": true
+        },
+        {
+          "type": "nonsymbol",
           "named": true
         },
         {
@@ -212,6 +293,10 @@
   },
   {
     "type": ":",
+    "named": false
+  },
+  {
+    "type": "::",
     "named": false
   },
   {

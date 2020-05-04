@@ -11,14 +11,25 @@ module.exports = grammar({
     _nonseq_expr: $ => choice(
       $.container,
       $.time,
+      $.nonsymbol,
       $.binary_op,
       $.symbol,
+      $.conflicting_symbol,
       $.text,
     ),
 
-    binary_op: $ => prec.left(10, seq($._nonseq_expr, $.symbol, $._nonseq_expr)),
+    binary_op: $ => choice(
+      prec.left(10, seq($.symbol, alias($.binary_op, 'subbinary_op'))),
+      prec.left(10, seq($.symbol, $._nonseq_expr)),
+      prec.left(5, seq($.conflicting_symbol, alias($.binary_op, 'subbinary_op'))),
+      prec.left(5, seq($.conflicting_symbol, $._nonseq_expr)),
+    ),
 
-    symbol: $ => prec(-100, choice(
+    nonsymbol: $ => choice(
+      '::',
+    ),
+
+    symbol: $ => choice(
       '===',
       '<=>',
       '=>',
@@ -27,12 +38,14 @@ module.exports = grammar({
       '>=',
       '==',
       '=',
-      '<',
-      '>',
       ':',
       '-',
       '+',
-    )),
+    ),
+    conflicting_symbol: $ => choice(
+      '<',
+      '>',
+    ),
 
     container: $ => choice(
       seq(
@@ -58,16 +71,16 @@ module.exports = grammar({
     ),
 
     comma_delimited_sequence: $ => prec.right(20, seq(
-      repeat1($._nonseq_expr),
-      repeat1(seq(
+      repeat1(prec.right($._nonseq_expr)),
+      repeat1(prec.right(seq(
         ',',
-        prec.right(repeat1($._nonseq_expr)))),
+        prec.right(repeat1(prec.right($._nonseq_expr)))))),
     )),
 
     text: $ => prec.left(-50, /[^()\[\]{},:=<>\s][^()\[\]{},:=<>]*/),
     time: $ => /([0-1]?[0-9]|[2][0-3]):([0-5][0-9])(:[0-5][0-9])?/,
   },
   conflicts: $ => [
-    [$.binary_op],
+    [$.conflicting_symbol, $.container]
   ]
 });

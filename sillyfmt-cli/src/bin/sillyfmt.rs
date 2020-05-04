@@ -20,8 +20,8 @@ fn main() -> io::Result<()> {
         println!("Hit enter twice to format, or re-run with --newline");
     }
     silly_format(
-        io::stdin(),
-        io::stdout(),
+        io::stdin().lock(),
+        io::stdout().lock(),
         format_on_newline,
         if print_debug {
             Some(std::io::stderr())

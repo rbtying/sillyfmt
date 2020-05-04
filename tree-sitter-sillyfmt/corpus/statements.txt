@@ -127,7 +127,7 @@ a=>b, c=>d, e=>f
 
 ---
 
-(source_file (comma_delimited_sequence (binary_op (text) (symbol) (text)) (binary_op (text) (symbol) (text)) (binary_op (text) (symbol) (text))))
+(source_file (text) (comma_delimited_sequence (binary_op (symbol) (text)) (text) (binary_op (symbol) (text)) (text) (binary_op (symbol) (text))))
 
 
 ================
@@ -138,7 +138,37 @@ a => b
 
 ---
 
-(source_file (binary_op (text) (symbol) (text)))
+(source_file (text) (binary_op (symbol) (text)))
+
+===========================
+Binary operation (repeated)
+===========================
+
+a >>>> b
+
+---
+
+(source_file (text) (binary_op (conflicting_symbol) (conflicting_symbol) (conflicting_symbol) (conflicting_symbol) (text)))
+
+=================================
+Binary operation (low precedence)
+=================================
+
+a < b
+
+---
+
+(source_file (text) (binary_op (conflicting_symbol) (text)))
+
+===============
+Non-symbol (::)
+===============
+
+a :: b
+
+---
+
+(source_file (text) (nonsymbol) (text))
 
 ==============================
 Nested sequences in containers
@@ -153,4 +183,14 @@ Nested sequences in containers
 
 ---
 
-(source_file (container (comma_delimited_sequence (binary_op (text) (symbol) (text)) (binary_op (text) (symbol) (container (comma_delimited_sequence (text) (text) (text) (text)))))))
+(source_file (container (text) (comma_delimited_sequence (binary_op (symbol) (text)) (text) (binary_op (symbol) (container (comma_delimited_sequence (text) (text) (text) (text)))))))
+
+=================
+Ruby nested stuff
+=================
+
+<A::B::C::D::E:0xXXXXXX @data={nil=>#<F 428400.0>}>
+
+---
+
+(source_file (container (text) (nonsymbol) (text) (nonsymbol) (text) (nonsymbol) (text) (nonsymbol) (text) (binary_op (symbol) (text)) (binary_op (symbol) (container (text) (binary_op (symbol) (text)) (container (text))))))
