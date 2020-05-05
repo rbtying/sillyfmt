@@ -8,5 +8,6 @@ edition = "2018"
 
 [dependencies]
 atty = "*"
+rustyline = "6.1"
 sillyfmt-tree-sitter = { path = '../sillyfmt-tree-sitter' }
 sillyfmt = { path = '../sillyfmt' }

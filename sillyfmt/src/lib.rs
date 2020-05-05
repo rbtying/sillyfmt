@@ -25,17 +25,45 @@ pub trait ParseNode<'a> {
 
 pub fn silly_format(
     reader: impl Read,
+    writer: impl Write,
+    format_on_newline: bool,
+    print_debug: Option<impl Write>,
+    parser: impl Fn(String) -> (Box<dyn ParseTree>, String),
+) -> Result<()> {
+    let reader = BufReader::new(reader);
+    silly_format_iter(
+        &mut reader.lines(),
+        writer,
+        format_on_newline,
+        print_debug,
+        parser,
+    )
+}
+
+pub fn silly_format_iter(
+    reader: &mut impl Iterator<Item = Result<String>>,
     mut writer: impl Write,
     format_on_newline: bool,
     mut print_debug: Option<impl Write>,
     parser: impl Fn(String) -> (Box<dyn ParseTree>, String),
 ) -> Result<()> {
-    let reader = BufReader::new(reader);
-
     let mut data = String::new();
 
-    for line in reader.lines() {
-        let line = line?;
+    for line in reader {
+        let line = match line {
+            Ok(line) => line,
+            Err(e) => {
+                if !data.is_empty() {
+                    do_format(
+                        &mut writer,
+                        mem::replace(&mut data, String::new()),
+                        print_debug.as_mut(),
+                        &parser,
+                    )?;
+                }
+                Err(e)?
+            }
+        };
         if !line.is_empty() {
             data.push_str(&line);
             data.push('\n');
